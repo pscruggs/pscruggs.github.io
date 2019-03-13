@@ -1,211 +1,103 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="chrome=1">
+		<title> Face Detection in JavaScript</title>
+		<script src="camvas.js"></script>
+		<script src="../tf.min.js"></script>
+	</head>
+	<script>
+		var initialized = false;
+		function button_callback() {
+			/*
+				(0) check whether we're already running face detection
+			*/
+			if(initialized)
+				return; // if yes, then do not initialize everything again
+			/*
+				(1) prepare the pico.js face detector
+			*/
+			var update_memory = tf.instantiate_detection_memory(5); // we will use the detections of the last 5 frames
+			var facefinder_classify_region = function(r, c, s, pixels, ldim) {return -1.0;};
+			var cascadeurl = 'facefinder';
+			fetch(cascadeurl).then(function(response) {
+				response.arrayBuffer().then(function(buffer) {
+					var bytes = new Int8Array(buffer);
+					facefinder_classify_region = tf.unpack_cascade(bytes);
+					console.log('* cascade loaded');
+				})
+			})
+			/*
+				(2) get the drawing context on the canvas and define a function to transform an RGBA image to grayscale
+			*/
+			var ctx = document.getElementsByTagName('canvas')[0].getContext('2d');
+			function rgba_to_grayscale(rgba, nrows, ncols) {
+				var gray = new Uint8Array(nrows*ncols);
+				for(var r=0; r<nrows; ++r)
+					for(var c=0; c<ncols; ++c)
+						// gray = 0.2*red + 0.7*green + 0.1*blue
+						gray[r*ncols + c] = (2*rgba[r*4*ncols+4*c+0]+7*rgba[r*4*ncols+4*c+1]+1*rgba[r*4*ncols+4*c+2])/10;
+				return gray;
+			}
+			/*
+				(3) this function is called each time a video frame becomes available
+			*/
+			var processfn = function(video, dt) {
+				// render the video frame to the canvas element and extract RGBA pixel data
+				ctx.drawImage(video, 0, 0);
+				var rgba = ctx.getImageData(0, 0, 640, 480).data;
+				// prepare input to `run_cascade`
+				image = {
+					"pixels": rgba_to_grayscale(rgba, 480, 640),
+					"nrows": 480,
+					"ncols": 640,
+					"ldim": 640
+				}
+				params = {
+					"shiftfactor": 0.1, // move the detection window by 10% of its size
+					"minsize": 100,     // minimum size of a face
+					"maxsize": 1000,    // maximum size of a face
+					"scalefactor": 1.1  // for multiscale processing: resize the detection window by 10% when moving to the higher scale
+				}
+				// run the cascade over the frame and cluster the obtained detections
+				// dets is an array that contains (r, c, s, q) quadruplets
+				// (representing row, column, scale and detection score)
+				dets = tf.run_cascade(image, facefinder_classify_region, params);
+				dets = update_memory(dets);
+				dets = tf.cluster_detections(dets, 0.2); // set IoU threshold to 0.2
+				// draw detections
+				for(i=0; i<dets.length; ++i)
+					// check the detection score
+					// if it's above the threshold, draw it
+					// (the constant 50.0 is empirical: other cascades might require a different one)
+					if(dets[i][3]>50.0)
+					{
+						ctx.beginPath();
+						ctx.arc(dets[i][1], dets[i][0], dets[i][2]/2, 0, 2*Math.PI, false);
+						ctx.lineWidth = 3;
+						ctx.strokeStyle = 'red';
+						ctx.stroke();
+					}
+			}
+			/*
 
-<head>
-
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <meta name="description" content="">
-    <meta name="author" content="">
-
-    <title>Wellness Evaluation Services</title>
-
-    <!-- Bootstrap core CSS -->
-    <link href="vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
-
-    <!-- Custom fonts for this template -->
-    <link href="vendor/font-awesome/css/font-awesome.min.css" rel="stylesheet" type="text/css">
-
-    <!-- Custom styles for this template -->
-    <link href="css/modern-business.css" rel="stylesheet">
-
-    <!-- Temporary navbar container fix -->
-    <style>
-    .navbar-toggler {
-        z-index: 1;
-    }
-    
-    @media (max-width: 576px) {
-        nav > .container {
-            width: 100%;
-        }
-    }
-    /* Temporary fix for img-fluid sizing within the carousel */
-    
-    .carousel-item.active,
-    .carousel-item-next,
-    .carousel-item-prev {
-        display: block;
-    }
-    </style>
-
-</head>
-
-<body>
-
-    <!-- Navigation -->
-    <nav class="navbar fixed-top navbar-toggleable-md navbar-inverse bg-inverse">
-        <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarExample" aria-controls="navbarExample" aria-expanded="false" aria-label="Toggle navigation">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="container">
-            <a class="navbar-brand" href="index.html">Wellness Evaluation Services</a>
-            <div class="collapse navbar-collapse" id="navbarExample">
-                <ul class="navbar-nav ml-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="about.html">About</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="services.html">Services</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="contact.html">Contact</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="schedule.html">Schedule Now</a>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    </nav>
-
-
-    <header>
-        <div id="carouselExampleIndicators" class="carousel slide" data-ride="carousel">
-            <ol class="carousel-indicators">
-                <li data-target="#carouselExampleIndicators" data-slide-to="0" class="active"></li>
-                <li data-target="#carouselExampleIndicators" data-slide-to="1"></li>
-                <li data-target="#carouselExampleIndicators" data-slide-to="2"></li>
-            </ol>
-            <div class="carousel-inner" role="listbox">
-                <!-- Slide One - Set the background image for this slide in the line below -->
-                <div class="carousel-item active" style="background-image: url('images/bloodpressure.jpg')">
-                    <div class="carousel-caption d-none d-md-block">
-                        <h3>First Slide</h3>
-                        <p>This is a description for the first slide.</p>
-                    </div>
-                </div>
-                <!-- Slide Two - Set the background image for this slide in the line below -->
-                <div class="carousel-item" style="background-image: url('images/chair.jpeg')">
-                    <div class="carousel-caption d-none d-md-block">
-                        <h3>Second Slide</h3>
-                        <p>This is a description for the second slide.</p>
-                    </div>
-                </div>
-                <!-- Slide Three - Set the background image for this slide in the line below -->
-                <div class="carousel-item" style="background-image: url('images/flu.jpg')">
-                    <div class="carousel-caption d-none d-md-block">
-                        <h3>Third Slide</h3>
-                        <p>This is a description for the third slide.</p>
-                    </div>
-                </div>
-            </div>
-            <a class="carousel-control-prev" href="#carouselExampleIndicators" role="button" data-slide="prev">
-                <span class="carousel-control-prev-icon" aria-hidden="true"></span>
-                <span class="sr-only">Previous</span>
-            </a>
-            <a class="carousel-control-next" href="#carouselExampleIndicators" role="button" data-slide="next">
-                <span class="carousel-control-next-icon" aria-hidden="true"></span>
-                <span class="sr-only">Next</span>
-            </a>
-        </div>
-    </header>
-
-    <!-- Page Content -->
-    <div class="container">
-
-        <h1 class="my-4">Welcome to Wellness Evaluation Services</h1>
-
-        <!-- Marketing Icons Section -->
-        <div class="row">
-            <div class="col-lg-4 mb-4">
-                <div class="card h-100">
-                    <h4 class="card-header">General Services <i class="fa fa-plus-square fa-5" aria-hidden="true"></i></h4> 
-                    <div class="card-block">
-                        <p class="card-text">We offer on site physicals <br> We offer vaccinations including: Flu, MMR, B12, Gardasil, additional options<br>
-                            <img class="img-fluid" src="images/wecometoyou.png" alt="We come to you!" style="width:350px;height:200px;">
-                        </p>
-                    </div>
-                    <div class="card-footer">
-                        <a href="#" class="btn btn-primary">Learn More</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-lg-4 mb-4">
-                <div class="card h-100">
-                    <h4 class="card-header">Schedule an Appointment <i class="fa fa-calendar-plus-o" aria-hidden="true"></i></h4>
-                    <div class="card-block">
-                        <p class="card-text">List a few reqirements here that they need to know before calling you etc.<br>We are always quick to respond and offer great support</p>
-                    </div>
-                    <div class="card-footer">
-                        <a href="#" class="btn btn-primary">Schedule Now</a>
-                    </div>
-                </div>
-            </div>
-            <div class="col-lg-4 mb-4">
-                <div class="card h-100">
-                    <h4 class="card-header">Longstanding Reputation <i class="fa fa-check-circle-o" aria-hidden="true"></i></h4>
-                    <div class="card-block">
-                        <p class="card-text">We have built trust with a variety of local organizations over the years. References are available upon request.</p>
-                    </div>
-                    <div class="card-footer">
-                        <a href="#" class="btn btn-primary">Learn More</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <!-- /.row -->
-        <!-- /.row -->
-
-        <!-- Features Section -->
-        <div class="row">
-            <div class="col-lg-6">
-                <h2>Modern Business Features</h2>
-                <p>The Modern Business template by Start Bootstrap includes:</p>
-                <ul>
-                    <li><strong>Bootstrap v4</strong>
-                    </li>
-                    <li>jQuery</li>
-                    <li>Font Awesome</li>
-                    <li>Working contact form with validation</li>
-                    <li>Unstyled page elements for easy customization</li>
-                </ul>
-                <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Corporis, omnis doloremque non cum id reprehenderit, quisquam totam aspernatur tempora minima unde aliquid ea culpa sunt. Reiciendis quia dolorum ducimus unde.</p>
-            </div>
-            <div class="col-lg-6">
-                <img class="img-fluid rounded" src="images/doctor.jpeg" alt="The Doctor is in" style="width:400px;height:300px;">
-            </div>
-        </div>
-        <!-- /.row -->
-
-        <hr>
-
-        <!-- Call to Action Section -->
-        <div class="row mb-4">
-            <div class="col-md-8">
-                <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Molestias, expedita, saepe, vero rerum deleniti beatae veniam harum neque nemo praesentium cum alias asperiores commodi.</p>
-            </div>
-            <div class="col-md-4">
-                <a class="btn btn-lg btn-secondary btn-block" href="schedule.html">Order Form</a>
-            </div>
-        </div>
-
-    </div>
-    <!-- /.container -->
-
-    <!-- Footer -->
-    <footer class="py-5 bg-inverse">
-        <div class="container">
-            <p class="m-0 text-center text-white">Copyright &copy; Wellness Evaluation Services 2017</p>
-        </div>
-        <!-- /.container -->
-    </footer>
-
-    <!-- Bootstrap core JavaScript -->
-    <script src="vendor/jquery/jquery.min.js"></script>
-    <script src="vendor/tether/tether.min.js"></script>
-    <script src="vendor/bootstrap/js/bootstrap.min.js"></script>
-
-</body>
-
+			*/
+			var mycamvas = new camvas(ctx, processfn);
+			/*
+				(5) it seems that everything went well
+			*/
+			initialized = true;
+		}
+	</script>
+	<body>
+		<section>
+			<h3> Face Detection in JavaScript</h3>
+			<p>Click the Button</p>
+		</section>
+		<hr>
+		<p><center><input type="button" value="Start real-time face detection" onclick="button_callback()"></center></p>
+		<p><center><canvas width=640 height=480></canvas></center></p>
+	</div>
+	</body>
 </html>
